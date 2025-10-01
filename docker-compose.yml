@@ -1,0 +1,186 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # HDFS NameNode
+  namenode:
+    build:
+      context: ./hadoop
+      dockerfile: Dockerfile
+    container_name: namenode
+    hostname: namenode
+    ports:
+      - "9870:9870"  # NameNode Web UI
+      - "8020:8020"  # NameNode IPC
+    environment:
+      - CLUSTER_NAME=hadoop-cluster
+    env_file:
+      - ./hadoop/hadoop.env
+    volumes:
+      - namenode_data:/hadoop/dfs/name
+      - ./scripts:/external-scripts:ro
+    command: ["/scripts/start-hdfs.sh", "namenode"]
+    networks:
+      - spark-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9870"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # HDFS DataNode 1
+  datanode1:
+    build:
+      context: ./hadoop
+      dockerfile: Dockerfile
+    container_name: datanode1
+    hostname: datanode1
+    ports:
+      - "9864:9864"  # DataNode Web UI
+    env_file:
+      - ./hadoop/hadoop.env
+    volumes:
+      - datanode1_data:/hadoop/dfs/data
+    command: ["/scripts/start-hdfs.sh", "datanode"]
+    networks:
+      - spark-network
+    depends_on:
+      namenode:
+        condition: service_started
+
+  # HDFS DataNode 2
+  datanode2:
+    build:
+      context: ./hadoop
+      dockerfile: Dockerfile
+    container_name: datanode2
+    hostname: datanode2
+    ports:
+      - "9865:9864"  # DataNode Web UI
+    env_file:
+      - ./hadoop/hadoop.env
+    volumes:
+      - datanode2_data:/hadoop/dfs/data
+    command: ["/scripts/start-hdfs.sh", "datanode"]
+    networks:
+      - spark-network
+    depends_on:
+      namenode:
+        condition: service_started
+
+  # YARN ResourceManager
+  resourcemanager:
+    build:
+      context: ./hadoop
+      dockerfile: Dockerfile
+    container_name: resourcemanager
+    hostname: resourcemanager
+    ports:
+      - "8088:8088"  # ResourceManager Web UI
+      - "8030:8030"  # ResourceManager Scheduler
+      - "8031:8031"  # ResourceManager Tracker
+      - "8032:8032"  # ResourceManager Resource Tracker
+    env_file:
+      - ./hadoop/hadoop.env
+    command: ["/scripts/start-hdfs.sh", "resourcemanager"]
+    networks:
+      - spark-network
+    depends_on:
+      - namenode
+      - datanode1
+      - datanode2
+
+  # YARN NodeManager 1
+  nodemanager1:
+    build:
+      context: ./hadoop
+      dockerfile: Dockerfile
+    container_name: nodemanager1
+    hostname: nodemanager1
+    ports:
+      - "8042:8042"  # NodeManager Web UI
+    env_file:
+      - ./hadoop/hadoop.env
+    command: ["/scripts/start-hdfs.sh", "nodemanager"]
+    networks:
+      - spark-network
+    depends_on:
+      - resourcemanager
+
+  # YARN NodeManager 2
+  nodemanager2:
+    build:
+      context: ./hadoop
+      dockerfile: Dockerfile
+    container_name: nodemanager2
+    hostname: nodemanager2
+    ports:
+      - "8043:8042"  # NodeManager Web UI
+    env_file:
+      - ./hadoop/hadoop.env
+    command: ["/scripts/start-hdfs.sh", "nodemanager"]
+    networks:
+      - spark-network
+    depends_on:
+      - resourcemanager
+
+  # Spark Master (for History Server and Client)
+  spark-master:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-master
+    hostname: spark-master
+    ports:
+      - "8080:8080"  # Spark Master Web UI
+      - "7077:7077"  # Spark Master Port
+      - "18080:18080"  # Spark History Server
+      - "4040:4040"  # Spark Application UI
+    environment:
+      - SPARK_MODE=master
+    env_file:
+      - ./hadoop/hadoop.env
+    volumes:
+      - ./spark/app:/app
+      - ./data:/data
+      - spark_logs:/spark/logs
+      - ./scripts:/external-scripts:ro
+    networks:
+      - spark-network
+    depends_on:
+      - namenode
+      - resourcemanager
+    command: ["tail", "-f", "/dev/null"]
+
+  # Spark Client (for submitting jobs)
+  spark-client:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-client
+    hostname: spark-client
+    environment:
+      - SPARK_MODE=client
+    env_file:
+      - ./hadoop/hadoop.env
+    volumes:
+      - ./spark/app:/app
+      - ./data:/data
+      - ./scripts:/scripts:ro
+    networks:
+      - spark-network
+    depends_on:
+      - namenode
+      - resourcemanager
+      - spark-master
+    command: ["tail", "-f", "/dev/null"]
+
+volumes:
+  namenode_data:
+  datanode1_data:
+  datanode2_data:
+  spark_logs:
+
+networks:
+  spark-network:
+    driver: bridge
