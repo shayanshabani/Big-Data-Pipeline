@@ -37,6 +37,7 @@ COPY config/* $HADOOP_CONF_DIR/
 # Copy startup script
 COPY scripts/start-hdfs.sh /scripts/start-hdfs.sh
 
+
 # Set JAVA_HOME in hadoop-env.sh
 RUN echo "export JAVA_HOME=${JAVA_HOME}" >> $HADOOP_CONF_DIR/hadoop-env.sh
 

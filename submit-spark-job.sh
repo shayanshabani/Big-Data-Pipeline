@@ -3,14 +3,14 @@
 
 set -e
 
-APP_JAR="/app/target/parquet-stream-reader-1.0-SNAPSHOT.jar"
-MAIN_CLASS="com.streaming.ParquetStreamReader"
+APP_JAR="target/spark-streaming-hdfs-1.0-SNAPSHOT.jar"
+MAIN_CLASS="com.streaming.core.StreamingJobSubmitter"
 
 echo "========================================="
 echo "Building Spark Application..."
 echo "========================================="
 
-cd /app
+cd spark/app
 
 # Clean and build
 mvn clean package -DskipTests
@@ -26,19 +26,18 @@ echo "========================================="
 echo "Submitting Spark job to YARN..."
 echo "========================================="
 
-spark-submit \
+sudo docker cp ${APP_JAR} spark-client:/app/
+
+sudo docker exec -it spark-client spark-submit \
   --class $MAIN_CLASS \
   --master yarn \
   --deploy-mode client \
-  --driver-memory 1g \
-  --executor-memory 2g \
+  --driver-memory 512m \
+  --executor-memory 1g \
   --executor-cores 1 \
   --num-executors 2 \
-  --conf spark.yarn.submit.waitAppCompletion=true \
-  --conf spark.sql.streaming.schemaInference=true \
-  --conf spark.sql.parquet.compression.codec=snappy \
-  --conf spark.yarn.maxAppAttempts=1 \
-  $APP_JAR
+  $APP_JAR \
+  sales-aggregation
 
 echo ""
 echo "========================================="

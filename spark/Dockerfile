@@ -43,9 +43,12 @@ RUN mkdir -p /spark/logs /app /scripts
 # Copy Spark configuration
 COPY spark-defaults.conf $SPARK_HOME/conf/spark-defaults.conf
 
+COPY config/* $HADOOP_CONF_DIR/
+
 # Set JAVA_HOME in spark-env.sh
 RUN echo "export JAVA_HOME=${JAVA_HOME}" > $SPARK_HOME/conf/spark-env.sh && \
-    echo "export HADOOP_CONF_DIR=${HADOOP_CONF_DIR}" >> $SPARK_HOME/conf/spark-env.sh
+    echo "export HADOOP_CONF_DIR=${HADOOP_CONF_DIR}" >> $SPARK_HOME/conf/spark-env.sh && \
+    echo "export YARN_CONF_DIR=${HADOOP_CONF_DIR}" >> $ $SPARK_HOME/conf/spark-env.sh
 
 WORKDIR /app
 

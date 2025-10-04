@@ -19,8 +19,11 @@ for i in {1..30}; do
 done
 
 # Create input directory for streaming data
-echo "Creating /input/streaming-data..."
-hdfs dfs -mkdir -p /input/streaming-data
+echo "Creating /streaming/sales/input..."
+hdfs dfs -mkdir -p /streaming/sales/input
+
+echo "Creating /streaming/sales/checkpoint..."
+hdfs dfs -mkdir -p /streaming/sales/checkpoint
 
 # Create Spark logs directory
 echo "Creating /spark-logs..."
@@ -32,9 +35,10 @@ hdfs dfs -mkdir -p /output
 
 # Set permissions
 echo "Setting permissions..."
-hdfs dfs -chmod -R 777 /input
+hdfs dfs -chmod -R 777 /streaming/sales/input
 hdfs dfs -chmod -R 777 /spark-logs
 hdfs dfs -chmod -R 777 /output
+hdfs dfs -chmod -R 777 /streaming/sales/checkpoint
 
 echo ""
 echo "✓ HDFS directories created successfully!"
