@@ -45,6 +45,9 @@ COPY spark-defaults.conf $SPARK_HOME/conf/spark-defaults.conf
 
 COPY config/* $HADOOP_CONF_DIR/
 
+RUN echo "worker1" >> ${HADOOP_CONF_DIR}/workers
+RUN echo "worker2" >> ${HADOOP_CONF_DIR}/workers
+
 # Set JAVA_HOME in spark-env.sh
 RUN echo "export JAVA_HOME=${JAVA_HOME}" > $SPARK_HOME/conf/spark-env.sh && \
     echo "export HADOOP_CONF_DIR=${HADOOP_CONF_DIR}" >> $SPARK_HOME/conf/spark-env.sh && \

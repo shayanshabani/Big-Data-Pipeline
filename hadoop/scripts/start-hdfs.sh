@@ -66,8 +66,8 @@ case $SERVICE in
         
     "resourcemanager")
         wait_for_service namenode 9870
-        wait_for_service datanode1 9864
-        wait_for_service datanode2 9864
+        # wait_for_service datanode1 9864
+        # wait_for_service datanode2 9864
         
         echo "Starting ResourceManager..."
         yarn --daemon start resourcemanager
@@ -90,6 +90,33 @@ case $SERVICE in
         
         # Keep container running and tail logs
         tail -f /opt/hadoop/logs/yarn-*-nodemanager-*.log 2>/dev/null || tail -f /dev/null
+        ;;
+
+    "worker")
+        wait_for_service namenode 9870
+        wait_for_service resourcemanager 8088
+        
+        echo "Starting Worker Node..."
+        hdfs --daemon start datanode
+
+        echo "DataNode started successfully!"
+        yarn --daemon start nodemanager
+        
+        echo "NodeManager started successfully!"
+        DATANODE_LOG="/opt/hadoop/logs/hadoop-*-datanode-*.log"
+        NODEMANAGER_LOG="/opt/hadoop/logs/yarn-*-nodemanager-*.log"
+
+        # Wait for at least one log file to exist before tailing
+        while [ ! -f $DATANODE_LOG ] && [ ! -f $NODEMANAGER_LOG ]; do
+            echo "Waiting for log files to be created..."
+            sleep 2
+        done
+
+        # Tail both log files. The '-F' flag is better than '-f' as it handles
+        # log file rotation and recreation gracefully.
+        tail -F $DATANODE_LOG $NODEMANAGER_LOG
+        # Keep container running and tail logs
+        # tail -f /opt/hadoop/logs/yarn-*-nodemanager-*.log 2>/dev/null || tail -f /dev/null
         ;;
         
     *)

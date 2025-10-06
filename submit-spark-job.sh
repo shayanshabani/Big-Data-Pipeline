@@ -36,6 +36,8 @@ sudo docker exec -it spark-client spark-submit \
   --executor-memory 1g \
   --executor-cores 1 \
   --num-executors 2 \
+  --conf "spark.sql.parquet.enableVectorizedReader=false" \
+  --conf "spark.sql.parquet.int96AsTimestamp=true" \
   $APP_JAR \
   sales-aggregation
 

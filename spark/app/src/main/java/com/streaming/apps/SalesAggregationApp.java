@@ -43,6 +43,7 @@ public class SalesAggregationApp implements StreamingApp {
         try {
             // Load configuration
             String inputPath = ConfigLoader.getRequiredProperty(config, "input.path");
+            String referencesPath = ConfigLoader.getRequiredProperty(config, "references.path");
             String checkpointPath = ConfigLoader.getRequiredProperty(config, "checkpoint.path");
             int triggerInterval = ConfigLoader.getIntProperty(config, "trigger.interval.seconds", 10);
             int maxFilesPerTrigger = ConfigLoader.getIntProperty(config, "max.files.per.trigger", 1);
@@ -56,10 +57,12 @@ public class SalesAggregationApp implements StreamingApp {
             logger.info("Configuration loaded - Input: {}, Checkpoint: {}", inputPath, checkpointPath);
             logger.info("Kafka Configuration - Brokers: {}, Topic: {}", kafkaBrokers, kafkaTopic);
 
+            String fourGPath = referencesPath.concat("/SQM_4GCell.csv");
+            String twoGPath = referencesPath.concat("/SQM_2GCell.csv");
 
             Dataset<Row> fourG = spark.read()
                 .option("header", "true")
-                .csv("SQM_4GCell.csv")
+                .csv(fourGPath)
                 .toDF("eNodeB_ID_Hex", "Cell_ID_Hex" ,"Cell_Name");
 
             fourG = fourG.withColumnRenamed("Cell_Name", "Cell_Name_4G");
@@ -67,7 +70,7 @@ public class SalesAggregationApp implements StreamingApp {
 
             Dataset<Row> twoG = spark.read()
                 .option("header", "true")
-                .csv("SQM_2GCell.csv")
+                .csv(twoGPath)
                 .toDF("LAC", "Cell_Code" ,"Cell_Name");
 
             twoG = twoG.withColumnRenamed("Cell_Name", "Cell_Name_2G");
@@ -76,10 +79,13 @@ public class SalesAggregationApp implements StreamingApp {
             // StructType schema = defineSchema();
 
             // Read streaming data from HDFS
+
             Dataset<Row> dataStream = spark
                 .readStream()
                 .format("parquet")
                 .option("maxFilesPerTrigger", maxFilesPerTrigger)
+                .option("datetimeRebaseMode", "CORRECTED")  // Add this
+                .option("int96RebaseMode", "CORRECTED")
                 // .option("latestFirst", "true")
                 // .option("fileNameOnly", "false")
                 // .schema(schema)
@@ -128,6 +134,7 @@ public class SalesAggregationApp implements StreamingApp {
             throw new StreamProcessingException("Failed to process sales stream", e);
         }
     }
+    
 
     private Dataset<Row> processStream(Dataset<Row> dataStream, boolean enableWatermark,
                                        int watermarkDelayMinutes, Dataset<Row> fourG, Dataset<Row> twoG) {
@@ -179,19 +186,27 @@ public class SalesAggregationApp implements StreamingApp {
         // Adding RECORD_DATE column, which comes from the Start_Time_s (in seconds) with the granularity of 5 minutes:
 
         
-        Dataset<Row> dataStreamWithRecordDate = dataStreamWithPageDelayMSEL
-        .withColumn("Timestamp", from_unixtime(col("Start_Time_s")))
-        .withColumn("RECORD_DATE", window(col("Timestamp"), "5 minutes"));
+        Dataset<Row> dataStreamWithTimestamp = dataStreamWithPageDelayMSEL.withColumn(
+            "Timestamp", 
+            from_unixtime(col("Start_Time_s"))
+        );
 
+        // Create the RECORD_DATE column by taking the 'start' field from the window
+        Dataset<Row> dataStreamWithRecordDate = dataStreamWithTimestamp.withColumn(
+            "RECORD_DATE", 
+            window(col("Timestamp"), "5 minutes").getField("start")
+        );
 
         // Adding the watermark of 1 hour
 
+        // TODO: commented this part since data is old, have to change the watermark i guess
 
-        if (enableWatermark) {
-            dataStreamWithRecordDate = dataStreamWithRecordDate
-                .withWatermark("Timestamp", watermarkDelayMinutes + " minutes");
-            logger.info("Watermark applied: {} minutes", watermarkDelayMinutes);
-        }
+
+        // if (enableWatermark) {
+        //     dataStreamWithRecordDate = dataStreamWithRecordDate
+        //         .withWatermark("Timestamp", watermarkDelayMinutes + " minutes");
+        //     logger.info("Watermark applied: {} minutes", watermarkDelayMinutes);
+        // }
 
         // Aggregation on RECORD_DATE, RAT, First_Get_Success_or_Failure_Flag, and Cell_Name
         // The output should be the number of “PAGE_SUCCEED_FLAG” being 0, Total “PAGE_DELAY_MSEL”, sum(“Page_Size”) when “Page_Size”/1024 > 10, and Total row count.
@@ -209,12 +224,6 @@ public class SalesAggregationApp implements StreamingApp {
                 sum(col("PAGE_DELAY_MSEL")).as("total_PAGE_DELAY_MSEL"),
                 sum(when(col("Page_Size").divide(lit(1024)).gt(lit(10)), col("Page_Size")).otherwise(lit(0))).as("sum_of_page_size"),
                 count("*").as("total_rows")
-            )
-            .select(
-                col("total_page_succeed_flag_zero"),
-                col("total_PAGE_DELAY_MSEL"),
-                col("sum_of_page_size"),
-                col("total_rows")
             );
 
 
@@ -252,4 +261,3 @@ public class SalesAggregationApp implements StreamingApp {
         monitorThread.start();
     }
 }
-

@@ -99,7 +99,9 @@ public class StreamingJobSubmitter {
             // Parquet optimization
             .config("spark.sql.parquet.filterPushdown", "true")
             .config("spark.sql.parquet.mergeSchema", "false")
-            .config("spark.sql.files.maxPartitionBytes", "134217728"); // 128 MB
+            .config("spark.sql.files.maxPartitionBytes", "134217728") // 128 MB
+            .config("spark.sql.parquet.enableVectorizedReader", "false")
+            .config("spark.sql.parquet.int96AsTimestamp", "true");
         
         // Add any custom Spark configurations from config file
         config.forEach((key, value) -> {

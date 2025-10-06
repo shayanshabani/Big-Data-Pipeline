@@ -27,46 +27,6 @@ services:
       timeout: 10s
       retries: 5
 
-  # HDFS DataNode 1
-  datanode1:
-    build:
-      context: ./hadoop
-      dockerfile: Dockerfile
-    container_name: datanode1
-    hostname: datanode1
-    ports:
-      - "9864:9864"  # DataNode Web UI
-    env_file:
-      - ./hadoop/hadoop.env
-    volumes:
-      - datanode1_data:/hadoop/dfs/data
-    command: ["/scripts/start-hdfs.sh", "datanode"]
-    networks:
-      - spark-network
-    depends_on:
-      namenode:
-        condition: service_started
-
-  # HDFS DataNode 2
-  datanode2:
-    build:
-      context: ./hadoop
-      dockerfile: Dockerfile
-    container_name: datanode2
-    hostname: datanode2
-    ports:
-      - "9865:9864"  # DataNode Web UI
-    env_file:
-      - ./hadoop/hadoop.env
-    volumes:
-      - datanode2_data:/hadoop/dfs/data
-    command: ["/scripts/start-hdfs.sh", "datanode"]
-    networks:
-      - spark-network
-    depends_on:
-      namenode:
-        condition: service_started
-
   # YARN ResourceManager
   resourcemanager:
     build:
@@ -85,42 +45,49 @@ services:
     networks:
       - spark-network
     depends_on:
-      - namenode
-      - datanode1
-      - datanode2
+      namenode:
+        condition: service_healthy
 
-  # YARN NodeManager 1
-  nodemanager1:
+  # Worder Node 1 (Data Node 1 + Node Manager 1)
+  worker1:
     build:
       context: ./hadoop
       dockerfile: Dockerfile
-    container_name: nodemanager1
-    hostname: nodemanager1
+    container_name: worker1
+    hostname: worker1
     ports:
+      - "9864:9864" # DataNode Web UI
       - "8042:8042"  # NodeManager Web UI
     env_file:
       - ./hadoop/hadoop.env
-    command: ["/scripts/start-hdfs.sh", "nodemanager"]
+    volumes:
+      - worker1_data:/hadoop/dfs/data
+    command: ["/scripts/start-hdfs.sh", "worker"]
     networks:
       - spark-network
     depends_on:
+      - namenode
       - resourcemanager
 
-  # YARN NodeManager 2
-  nodemanager2:
+  # Worder Node 2 (Data Node 2 + Node Manager 2)
+  worker2:
     build:
       context: ./hadoop
       dockerfile: Dockerfile
-    container_name: nodemanager2
-    hostname: nodemanager2
+    container_name: worker2
+    hostname: worker2
     ports:
+      - "9865:9864" # DataNode Web UI
       - "8043:8042"  # NodeManager Web UI
     env_file:
       - ./hadoop/hadoop.env
-    command: ["/scripts/start-hdfs.sh", "nodemanager"]
+    volumes:
+      - worker2_data:/hadoop/dfs/data
+    command: ["/scripts/start-hdfs.sh", "worker"]
     networks:
       - spark-network
     depends_on:
+      - namenode
       - resourcemanager
 
   # Kafka Broker 1 (KRaft mode - Controller + Broker)
@@ -357,21 +324,25 @@ services:
       # - kafka-3
     command: ["tail", "-f", "/dev/null"]
 
-  # click house service
+    # --- UPDATED CLICKHOUSE SERVICE ---
   clickhouse-server:
     image: clickhouse/clickhouse-server:latest
     container_name: clickhouse-server
     hostname: clickhouse-server
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "8123:8123" # HTTP interface
+      - "9000:9000" # Native TCP client interface
     volumes:
       - clickhouse_data:/var/lib/clickhouse/
       - clickhouse_logs:/var/log/clickhouse-server/
+      # *** THIS IS THE NEW AND IMPORTANT LINE ***
+      # Mount our init scripts directory to the special entrypoint directory.
+      - ./clickhouse_init_scripts:/docker-entrypoint-initdb.d
     networks:
       - spark-network
     depends_on:
-      - kafka-1
+      kafka-1:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
       interval: 30s
@@ -383,10 +354,11 @@ services:
         soft: 262144
         hard: 262144
 
+
 volumes:
   namenode_data:
-  datanode1_data:
-  datanode2_data:
+  worker1_data:
+  worker2_data:
   spark_logs:
   kafka1_data:
   # kafka2_data:

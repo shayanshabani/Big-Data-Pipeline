@@ -40,6 +40,8 @@ COPY scripts/start-hdfs.sh /scripts/start-hdfs.sh
 
 # Set JAVA_HOME in hadoop-env.sh
 RUN echo "export JAVA_HOME=${JAVA_HOME}" >> $HADOOP_CONF_DIR/hadoop-env.sh
+RUN echo "worker1" >> ${HADOOP_CONF_DIR}/workers
+RUN echo "worker2" >> ${HADOOP_CONF_DIR}/workers
 
 # Make scripts executable
 RUN chmod +x /scripts/*.sh
