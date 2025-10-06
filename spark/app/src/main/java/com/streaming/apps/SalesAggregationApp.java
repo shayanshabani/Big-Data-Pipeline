@@ -129,45 +129,12 @@ public class SalesAggregationApp implements StreamingApp {
         }
     }
 
-    /**
-     * Defines the schema for sales data.
-    //  */
-    // private StructType defineSchema() {
-    //     return new StructType(new StructField[]{
-    //         DataTypes.createStructField("transaction_id", DataTypes.StringType, false),
-    //         DataTypes.createStructField("timestamp", DataTypes.TimestampType, false),
-    //         DataTypes.createStructField("product_id", DataTypes.StringType, false),
-    //         DataTypes.createStructField("product_id", DataTypes.StringType, false),
-    //         DataTypes.createStructField("product_name", DataTypes.StringType, false),
-    //         DataTypes.createStructField("category", DataTypes.StringType, false),
-    //         DataTypes.createStructField("quantity", DataTypes.IntegerType, false),
-    //         DataTypes.createStructField("price", DataTypes.DoubleType, false),
-    //         DataTypes.createStructField("customer_id", DataTypes.StringType, false),
-    //         DataTypes.createStructField("product_name", DataTypes.StringType, false),
-    //         DataTypes.createStructField("category", DataTypes.StringType, false),
-    //         DataTypes.createStructField("quantity", DataTypes.IntegerType, false),
-    //         DataTypes.createStructField("price", DataTypes.DoubleType, false),
-    //         DataTypes.createStructField("customer_id", DataTypes.StringType, false),
-    //         DataTypes.createStructField("customer_country", DataTypes.StringType, false),
-    //         DataTypes.createStructField("payment_method", DataTypes.StringType, false)
-    //     });
-    // }
-
-    /**
-     * Processes the sales stream with enrichment and aggregations.// --- 1. Load Static Lookup DataFrames ---
-
-// Load the first CSV for ECI-based lookup
-Dataset<Row> firstCsvDf = spark.read()
-    .option("header", "false") // Assuming no header in the CSV
-    .csv("path/to/your/first.csv")
-    .toDF("ECI_Prefix", "ECI_Suffix", "Cell_Name_From_ECI");
-
-     */
     private Dataset<Row> processStream(Dataset<Row> dataStream, boolean enableWatermark,
                                        int watermarkDelayMinutes, Dataset<Row> fourG, Dataset<Row> twoG) {
 
         logger.info("Applying transformations and aggregations");
 
+        // The Join will be on first 5 characters of ECI matching eNodeB_ID_Hex and its sixth and seventh characters matching Cell_ID_Hex
 
         Dataset<Row> dataStreamJoined4G = dataStream.join(
             fourG,
@@ -195,7 +162,8 @@ Dataset<Row> firstCsvDf = spark.read()
             )
         );
 
-        // TODO: gotta check the validity of this implementation
+        // Adding PAGE_DELAY_MSEL column, which is equal to sum of TCP_Connect_RTT_ms and First_DNS_Response_Delay_Within_Page_ms
+        // and Page_Browsing_Delay divided by 1000000, if the value of First_Get_Success_or_Failure_Flag is equal to zero. otherwise it will be zero.
 
         Dataset<Row> dataStreamWithPageDelayMSEL = dataStreamWithCellName.withColumn(
             "PAGE_DELAY_MSEL",
@@ -204,35 +172,32 @@ Dataset<Row> firstCsvDf = spark.read()
                 .and(col("Page_Size").geq(lit(0))),
                 coalesce(col("TCP_Connect_RTT_ms"), lit(0))
                 .plus(coalesce(col("First_DNS_Response_Delay_Within_Page_ms"), lit(0)))
-                .plus(coalesce(col("Page_Browsing_Delay").divide(lit(1000000)), lit(0)))
+                .plus(coalesce(col("Page_Browsing_Delay"), lit(0)).divide(lit(1000000)))
             ).otherwise(lit(0))
         );
 
-        // TODO: gotta add RECORD_DATE column here:
+        // Adding RECORD_DATE column, which comes from the Start_Time_s (in seconds) with the granularity of 5 minutes:
+
+        
+        Dataset<Row> dataStreamWithRecordDate = dataStreamWithPageDelayMSEL
+        .withColumn("Timestamp", from_unixtime(col("Start_Time_s")))
+        .withColumn("RECORD_DATE", window(col("Timestamp"), "5 minutes"));
 
 
-
-        // Add enrichment: calculate total amount
-        // Dataset<Row> enrichedStream = salesStream
-        //     .withColumn("total_amount",
-        //         col("quantity").multiply(col("price")))
-        //     .withColumn("processing_time", current_timestamp());
-
-        // Apply watermark if enabled (for handling late data)
-
-        // TODO: gotta check whether water mark is applied correctly
+        // Adding the watermark of 1 hour
 
 
         if (enableWatermark) {
-            dataStreamWithPageDelayMSEL = dataStreamWithPageDelayMSEL
-                .withWatermark("timestamp", watermarkDelayMinutes + " minutes");
+            dataStreamWithRecordDate = dataStreamWithRecordDate
+                .withWatermark("Timestamp", watermarkDelayMinutes + " minutes");
             logger.info("Watermark applied: {} minutes", watermarkDelayMinutes);
         }
 
-        // TODO: gotta check this part:
+        // Aggregation on RECORD_DATE, RAT, First_Get_Success_or_Failure_Flag, and Cell_Name
+        // The output should be the number of “PAGE_SUCCEED_FLAG” being 0, Total “PAGE_DELAY_MSEL”, sum(“Page_Size”) when “Page_Size”/1024 > 10, and Total row count.
 
 
-        Dataset<Row> finalDataStream = dataStreamWithPageDelayMSEL
+        Dataset<Row> finalDataStream = dataStreamWithRecordDate
             .groupBy(
                 col("RECORD_DATE"),
                 col("RAT"),
@@ -240,9 +205,9 @@ Dataset<Row> firstCsvDf = spark.read()
                 col("Cell_Name")
             )
             .agg(
-                count(col("PAGE_SUCCEED_FLAG").equalTo(lit(0))).as("total_page_succeed_flag_zero"),
-                count(col("PAGE_DELAY_MSEL").notEqual(lit(0))).as("total_PAGE_DELAY_MSEL"),
-                sum(when(col("Page_Size").divide(lit(1000000)).gt(lit(10)), col("Page_Size")).otherwise(lit(0))).as("sum_of_page_size"),
+                sum(when(col("PAGE_SUCCEED_FLAG").equalTo(lit(0)), lit(1)).otherwise(lit(0))).as("total_page_succeed_flag_zero"),
+                sum(col("PAGE_DELAY_MSEL")).as("total_PAGE_DELAY_MSEL"),
+                sum(when(col("Page_Size").divide(lit(1024)).gt(lit(10)), col("Page_Size")).otherwise(lit(0))).as("sum_of_page_size"),
                 count("*").as("total_rows")
             )
             .select(
@@ -251,37 +216,6 @@ Dataset<Row> firstCsvDf = spark.read()
                 col("sum_of_page_size"),
                 col("total_rows")
             );
-
-        // Perform aggregations - Sales by category and country (windowed aggregation)
-        // Dataset<Row> categoryCountryAgg = enrichedStream
-        //     .groupBy(
-        //         window(col("timestamp"), "5 minutes", "1 minute"),
-        //         col("category"),
-        //         col("customer_country")
-        //     )
-        //     .agg(
-        //         count("*").as("transaction_count"),
-        //         sum("quantity").as("total_quantity"),
-        //         sum("total_amount").as("total_revenue"),
-        //         avg("total_amount").as("avg_transaction_value"),
-        //         min("total_amount").as("min_transaction"),
-        //         max("total_amount").as("max_transaction")
-        //     )
-        //     .select(
-        //         col("window.start").as("window_start"),
-        //         col("window.end").as("window_end"),
-        //         col("category"),
-        //         col("customer_country"),
-        //         col("transaction_count"),
-        //         col("total_quantity"),
-        //         round(col("total_revenue"), 2).as("total_revenue"),
-        //         round(col("avg_transaction_value"), 2).as("avg_transaction_value"),
-        //         round(col("min_transaction"), 2).as("min_transaction"),
-        //         round(col("max_transaction"), 2).as("max_transaction"),
-        //         current_timestamp().as("processed_at")
-        //     );
-
-        // return categoryCountryAgg;
 
 
         return finalDataStream;
@@ -318,3 +252,4 @@ Dataset<Row> firstCsvDf = spark.read()
         monitorThread.start();
     }
 }
+
